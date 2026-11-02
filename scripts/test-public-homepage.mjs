@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {normalizeWebsite,publicAddress,fetchHomepage,verifyPublicDns} from '../lib/public-homepage.mjs';
+const dnsResponse=()=>Response.json({Status:0,Answer:[{type:1,data:'93.184.216.34'}]});
+test('normalises to homepage and removes query, path and fragment',()=>assert.equal(normalizeWebsite('example.com/a?secret=x#part').href,'https://example.com/'));
+test('rejects local, special-scheme, credential, port and IP destinations',()=>{
+ for(const value of ['http://127.0.0.1','http://[::1]','https://localhost/','http://2130706433/','http://0x7f000001','ftp://example.com','https://user:pass@example.com','https://example.com:444','http://foo.internal','http://foo.local','https://example.com./']) assert.throws(()=>normalizeWebsite(value),value);
+});
+test('nonpublic IP ranges are blocked',()=>{for(const value of ['127.0.0.1','10.3.4.5','169.254.169.254','172.20.1.1','192.168.1.1','100.100.100.100','198.19.1.2','192.0.2.1','203.0.113.1','::1','::ffff:127.0.0.1','fc00::1','fe80::1','2002:7f00:1::','2001:db8::1'])assert.equal(publicAddress(value),false,value);assert.equal(publicAddress('1.1.1.1'),true);assert.equal(publicAddress('2606:4700:4700::1111'),true);});
+test('mixed public/private DNS answer is rejected',async()=>assert.rejects(()=>verifyPublicDns('example.com',async()=>Response.json({Status:0,Answer:[{type:1,data:'1.1.1.1'},{type:1,data:'127.0.0.1'}]}),undefined),/exclusively/));
+test('redirect to a local address is rejected before a request',async()=>{let calls=[];await assert.rejects(()=>fetchHomepage('example.com',async u=>{calls.push(u);return u.includes('dns-query')?dnsResponse():new Response(null,{status:302,headers:{location:'http://127.0.0.1/'}});}),/publicly/);assert.equal(calls.filter(x=>x.includes('127.0.0.1')).length,0);});
+test('successful page fetch returns actual content and final address',async()=>{const result=await fetchHomepage('example.com',async u=>u.includes('dns-query')?dnsResponse():new Response('<html><h1>Real page</h1></html>',{headers:{'content-type':'text/html'}}));assert.match(result.html,/Real page/);assert.equal(result.url,'https://example.com/');});
+test('bot challenge is not scored as customer website',async()=>assert.rejects(()=>fetchHomepage('example.com',async u=>u.includes('dns-query')?dnsResponse():new Response('<html><title>Just a moment</title><div>challenge-platform</div></html>',{headers:{'content-type':'text/html'}})),/bot-protection/));
+test('non-HTML and oversized responses are rejected',async()=>{await assert.rejects(()=>fetchHomepage('example.com',async u=>u.includes('dns-query')?dnsResponse():new Response('{}',{headers:{'content-type':'application/json'}})),/web page/);await assert.rejects(()=>fetchHomepage('example.com',async u=>u.includes('dns-query')?dnsResponse():new Response('<html>ok</html>',{headers:{'content-type':'text/html','content-length':'2000000'}})),/too large/);});

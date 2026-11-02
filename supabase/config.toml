@@ -1,0 +1,5 @@
+project_id = "soynpcyoskmeshpolhzi"
+
+[functions.scopex-assess]
+verify_jwt = true
+entrypoint = "./functions/scopex-assess/index.ts"
